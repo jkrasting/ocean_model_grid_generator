@@ -1,7 +1,53 @@
 [build-system]
-requires = [
-    "setuptools>=42",
-    "wheel"
-]
+requires = [ "setuptools>=42", "wheel", "setuptools-git-versioning"]
 build-backend = "setuptools.build_meta"
 
+[project]
+name = "oceangrid"
+description = "Tools for creating finite element spherical tripolar grids"
+dynamic = ["version"]
+authors = [{ name = "Niki Zadeh", email="climate-model-info@noaa.gov" }]
+
+license = {file = "LICENSE.txt"}
+readme = "README.md"
+requires-python = ">=3.8"
+keywords = ["oceanography", "mom", "mom6", "model", "grid"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "License :: Public Domain",
+    "Programming Language :: Python :: 3.10",
+]
+dependencies = [
+    "importlib_metadata <5.0.0",
+    "numpy",
+    "numpypi",
+    "netcdf4"
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
+
+[project.urls]
+homepage = "https://github.com/nikizadehgfdl/ocean_model_grid_generator"
+repository = "https://github.com/nikizadehgfdl/ocean_model_grid_generator"
+#documentation
+
+[tool.setuptools]
+script-files = ["src/oceangrid/ocean_grid_generator.py"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools-git-versioning]
+enabled = true
+template = "{tag}"
+dev_template = "{tag}"
+dirty_template = "{tag}"
+starting_version = "1.0.0"
+
+[tool.dynamic]
+version = "placeholder" # this is a placeholder for the version pulled with git-versioning
