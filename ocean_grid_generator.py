@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 import numpypi.numpypi_series as np
+from scipy.interpolate import CubicSpline
 
 # import numpy as np
 import argparse
@@ -485,7 +486,48 @@ def displacedPoleCap_baseGrid(i, j, ni, nj, lon0, lat0):
     return u, v, du, dv
 
 
-def displacedPoleCap_mesh(i, j, ni, nj, lon0, lat0, lam_pole, r_pole, excluded_fraction=None):
+def cubic_spline_ramping(nj, ramp_width):
+    ramp_start = nj - ramp_width
+    ramp_end = nj
+    x_points = [ramp_start - 1, ramp_start, ramp_end - 1, ramp_end]
+    y_points = [0, 0, 1, 1]
+    cs = CubicSpline(x_points, y_points, bc_type='natural')
+    j_points = np.arange(nj)
+    ramping_factors = cs(j_points)
+    ramping_factors = np.insert(ramping_factors[0:-1], 0, 0., axis=0)
+    ramping_factors = np.clip(ramping_factors, 0, 1)
+    return ramping_factors
+
+
+def adjust_grid_positions(lams_row, phis_row, ramp_factor, lamSO, lat0):
+    # Normalize the lamSO longitudes to be within the range of -300 to 60 degrees
+    #target_lons = np.mod(lamSO - (-300), 360) + (-300)
+    
+    # Normalize the lams_row longitudes in the same way
+    #lams_row = np.mod(lams_row - (-300), 360) + (-300)
+    
+    # Perform the interpolation using the ramping factor
+    # The interpolation will now respect the periodicity of the longitude values
+    #adjusted_lons = lams_row + ramp_factor * (target_lons - lams_row)
+    
+    # Normalize the adjusted longitudes back to the range of -300 to 60 degrees if necessary
+    #adjusted_lons = np.mod(adjusted_lons - (-300), 360) + (-300)
+    
+    # Ensure that the adjusted longitudes do not go beyond the limits of -300 and 60 degrees
+    #adjusted_lons = np.clip(adjusted_lons, -300, 60)
+    
+    # Adjust the latitude position based on the ramping factor
+    adjusted_lat = phis_row[0] + ramp_factor * (lat0 - phis_row[0])
+    
+    # Replicate the adjusted latitude across all longitude positions for the row
+    adjusted_lats = np.full_like(lams_row, adjusted_lat)
+
+    adjusted_lons = lams_row
+
+    return adjusted_lons, adjusted_lats
+
+
+def displacedPoleCap_mesh(i, j, ni, nj, lon0, lat0, lam_pole, r_pole, excluded_fraction=None, ramp_width=None, lamSO=None):
 
     long, latg, du, dv = displacedPoleCap_baseGrid(i, j, ni, nj, lon0, lat0)
     lamg = np.tile(long, (latg.shape[0], 1))
@@ -494,6 +536,18 @@ def displacedPoleCap_mesh(i, j, ni, nj, lon0, lat0, lam_pole, r_pole, excluded_f
     r_joint = np.tan((90 + lat0) * PI_180)
     z_0 = r_pole * (np.cos(lam_pole * PI_180) + 1j * np.sin(lam_pole * PI_180))
     lams, phis = displacedPoleCap_projection(lamg, phig, z_0, r_joint)
+
+    if ramp_width is not None:
+        ramping_factors = cubic_spline_ramping(nj, ramp_width)
+        print(ramping_factors)
+        print(type(ramping_factors))
+        print(ramping_factors.shape)
+        
+        # Apply the ramping factors to the displaced pole grid
+        for j_idx in range(nj - ramp_width, nj):
+            ramp_factor = ramping_factors[j_idx]
+            lams[j_idx, :], phis[j_idx, :] = adjust_grid_positions(lams[j_idx, :], phis[j_idx, :], ramp_factor, lamSO, lat0)
+    
     londp = lams[0, 0]
     latdp = phis[0, 0]
     if excluded_fraction is not None:
@@ -506,13 +560,13 @@ def displacedPoleCap_mesh(i, j, ni, nj, lon0, lat0, lam_pole, r_pole, excluded_f
         return lams, phis, londp, latdp
 
 
-def generate_displaced_pole_grid(Ni, Nj_scap, lon0, lat0, lon_dp, r_dp):
+def generate_displaced_pole_grid(Ni, Nj_scap, lon0, lat0, lon_dp, r_dp, ramp_width=None, lamSO=None):
     print("Generating displaced pole grid bounded at latitude ", lat0)
     print("   requested displaced pole lon,rdp=", lon_dp, r_dp)
     i_s = np.arange(Ni + 1)
     j_s = np.arange(Nj_scap + 1)
     x, y, londp, latdp = displacedPoleCap_mesh(
-        i_s, j_s, Ni, Nj_scap, lon0, lat0, lon_dp, r_dp
+        i_s, j_s, Ni, Nj_scap, lon0, lat0, lon_dp, r_dp, ramp_width=ramp_width, lamSO=lamSO,
     )
     print("   generated displaced pole lon,lat=", londp, latdp)
     return x, y, londp, latdp
@@ -1159,7 +1213,12 @@ def main(
             if lat_dp > -90: #if lapt_dp is specified, calculate r_dp
                 r_dp = np.tan((90 + lat_dp) * PI_180) / np.tan((90 + lat0_SC) * PI_180)
 
-            lamSC, phiSC, londp, latdp = generate_displaced_pole_grid(Ni, Nj_scap, lon0, lat0_SC, lon_dp, r_dp)
+            ramp_width=120
+            lamSOval=lamSO[0]
+            #ramp_width=None
+            #lamSOval=None
+
+            lamSC, phiSC, londp, latdp = generate_displaced_pole_grid(Ni, Nj_scap, lon0, lat0_SC, lon_dp, r_dp, ramp_width=ramp_width, lamSO=lamSOval)
             angleSC = angle_x(lamSC, phiSC)
 
             # Quadrature metrics using great circle approximations for the h's
@@ -1225,6 +1284,12 @@ def main(
                     angleSC = angleSC[jcut:, :]
 
         if write_subgrid_files:
+            print("lamSC", lamSC.shape)
+            print("phiSC", phiSC.shape)
+            print("dxSC",  dxSC.shape)
+            print("dySC",  dySC.shape)
+            print("areaSC", areaSC.shape)
+            print("angleSC", angleSC.shape)
             write_nc(lamSC, phiSC, dxSC, dySC, areaSC, angleSC, axis_units="degrees",
                           fnam=gridfilename + "SC.nc", description=desc, history=hist, source=source, debug=debug)
         if plotem:
@@ -1365,6 +1430,11 @@ def main(
             area3 = np.concatenate((area2, areaBP), axis=0)
             dy3_ = np.roll(y3[:, Ni // 4], shift=-1, axis=0) - y3[:, Ni // 4]
             if np.any(dy3_ == 0):
+                # Find the indexes where the value is zero which triggers the exception
+                zero_indexes = np.where(dy3_ == 0)[0]
+                # Print index locations and values for all occurrences of zero
+                for index in zero_indexes:
+                    print(f"Value triggering the exception (0) found at index location: {index}")
                 raise Exception(
                     "lattitude array has repeated values along symmetry meridian!"
                 )
